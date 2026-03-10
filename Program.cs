@@ -7,8 +7,8 @@ using System.Threading.Tasks;
 using Newtonsoft.Json.Linq;
 using System.IO;
 using System.Collections.Generic;
+using System.Globalization;
 using System.Windows.Forms;
-using System.Text.RegularExpressions;
 
 class Program : Form
 {
@@ -19,14 +19,15 @@ class Program : Form
     ProgressBar progressBar;
     Button helpButton;
 
-    HashSet<string> downloaded = new HashSet<string>();
-    HashSet<string> loggedNames = new HashSet<string>();
+    readonly HashSet<string> downloaded = new HashSet<string>();
+    readonly HashSet<string> loggedNames = new HashSet<string>();
+    readonly Dictionary<string, string> pendingFileNamesByUrl = new Dictionary<string, string>();
+    readonly HttpClient httpClient = new HttpClient();
 
     int downloadCount = 0;
 
     ClientWebSocket ws;
-
-    string lastFileName = "";
+    string sessionToken = "";
 
     public Program()
     {
@@ -81,7 +82,7 @@ class Program : Form
         Controls.Add(logBox);
         Controls.Add(downloadList);
 
-        StartProcess();
+        Shown += async (_, __) => await StartProcessAsync();
     }
 
     void HelpClick(object sender, EventArgs e)
@@ -146,13 +147,14 @@ class Program : Form
         progressBar.Value = value;
     }
 
-    async void StartProcess()
+    async Task StartProcessAsync()
     {
         try
         {
             statusLabel.Text = "상태 : DevTools 연결중";
 
             string wsUrl = await GetWebSocketUrl();
+            sessionToken = Guid.NewGuid().ToString("N");
 
             ws = new ClientWebSocket();
             await ws.ConnectAsync(new Uri(wsUrl), CancellationToken.None);
@@ -184,12 +186,22 @@ class Program : Form
 
     async Task InjectClickScript()
     {
+        string expression =
+            "document.addEventListener('click',function(e){" +
+            "var a=e.target.closest('a');" +
+            "if(!a){return;}" +
+            "var p={token:'" + sessionToken + "',href:(a.href||''),text:(a.innerText||'').trim()};" +
+            "console.log('FMSCLICK:'+JSON.stringify(p));" +
+            "});";
+
+        string escapedExpression = expression.Replace("\\", "\\\\").Replace("\"", "\\\"");
+
         string script =
         @"{
             ""id"":10,
             ""method"":""Runtime.evaluate"",
             ""params"":{
-                ""expression"":""document.addEventListener('click',function(e){var a=e.target.closest('a');if(a){console.log('FMSFILE:'+a.innerText);}});""
+                ""expression"":""" + escapedExpression + @"""
             }
         }";
 
@@ -198,67 +210,129 @@ class Program : Form
 
     async Task ProcessMessage(string msg)
     {
-        if (msg.Contains("FMSFILE:"))
-        {
-            int i = msg.IndexOf("FMSFILE:");
-            string name = msg.Substring(i + 8);
-
-            int end = name.IndexOf("\"");
-
-            if (end > 0)
-                name = name.Substring(0, end);
-
-            name = Regex.Unescape(name);
-
-            lastFileName = name.Trim();
-
-            if (!loggedNames.Contains(lastFileName))
-            {
-                loggedNames.Add(lastFileName);
-                Log("파일명 : " + lastFileName);
-            }
-
-            UpdateProgress(0);
-        }
-
-        if (!msg.Contains("thumbnail"))
-            return;
-
         try
         {
             var json = JObject.Parse(msg);
-
-            var url = json["params"]?["request"]?["url"]?.ToString();
-
-            if (url == null)
-                return;
-
-            if (!url.Contains("/renderings/0?resolution=thumbnail"))
-                return;
-
-            int idx = url.IndexOf("/renderings");
-
-            string pdfUrl = url.Substring(0, idx);
-
-            if (downloaded.Contains(pdfUrl))
-                return;
-
-            downloaded.Add(pdfUrl);
-
-            await DownloadPdf(pdfUrl);
+            CaptureClickedFileName(json);
+            await CaptureAndDownloadPdfAsync(json);
         }
-        catch
+        catch (Exception ex)
         {
+            Log("메시지 처리 실패 : " + ex.Message);
         }
     }
 
-    async Task DownloadPdf(string url)
+    void CaptureClickedFileName(JObject json)
+    {
+        string method = json["method"]?.ToString();
+        if (method != "Runtime.consoleAPICalled")
+            return;
+
+        var args = json["params"]?["args"] as JArray;
+        if (args == null || args.Count == 0)
+            return;
+
+        foreach (var arg in args)
+        {
+            string value = arg?["value"]?.ToString();
+            if (string.IsNullOrWhiteSpace(value) || !value.StartsWith("FMSCLICK:"))
+                continue;
+
+            var payload = JObject.Parse(value.Substring("FMSCLICK:".Length));
+            if (payload["token"]?.ToString() != sessionToken)
+                return;
+
+            string href = payload["href"]?.ToString() ?? "";
+            string text = payload["text"]?.ToString() ?? "";
+
+            string pdfUrl = NormalizePdfUrl(href);
+            if (string.IsNullOrWhiteSpace(pdfUrl))
+                return;
+
+            string fileName = SanitizeFileName(text);
+            if (string.IsNullOrWhiteSpace(fileName))
+                return;
+
+            pendingFileNamesByUrl[pdfUrl] = fileName;
+
+            if (!loggedNames.Contains(fileName))
+            {
+                loggedNames.Add(fileName);
+                Log("파일명 : " + fileName);
+            }
+
+            UpdateProgress(0);
+            return;
+        }
+    }
+
+    async Task CaptureAndDownloadPdfAsync(JObject json)
+    {
+        string method = json["method"]?.ToString();
+        if (method != "Network.requestWillBeSent")
+            return;
+
+        var url = json["params"]?["request"]?["url"]?.ToString();
+
+        if (url == null)
+            return;
+
+        if (!url.Contains("/renderings/0?resolution=thumbnail"))
+            return;
+
+        int idx = url.IndexOf("/renderings", StringComparison.Ordinal);
+        if (idx <= 0)
+            return;
+
+        string pdfUrl = url.Substring(0, idx);
+
+        if (downloaded.Contains(pdfUrl))
+            return;
+
+        downloaded.Add(pdfUrl);
+
+        string fileName;
+        if (!pendingFileNamesByUrl.TryGetValue(pdfUrl, out fileName))
+        {
+            fileName = "untitled_" + DateTime.Now.ToString("yyyyMMdd_HHmmss_fff", CultureInfo.InvariantCulture);
+        }
+
+        await DownloadPdf(pdfUrl, fileName);
+    }
+
+    static string NormalizePdfUrl(string url)
+    {
+        if (string.IsNullOrWhiteSpace(url))
+            return "";
+
+        int idx = url.IndexOf("/renderings", StringComparison.Ordinal);
+        if (idx > 0)
+            return url.Substring(0, idx);
+
+        int query = url.IndexOf('?', StringComparison.Ordinal);
+        if (query > 0)
+            return url.Substring(0, query);
+
+        return url;
+    }
+
+    static string SanitizeFileName(string name)
+    {
+        string fileName = (name ?? "").Trim();
+        foreach (char c in Path.GetInvalidFileNameChars())
+            fileName = fileName.Replace(c, '_');
+
+        if (!fileName.EndsWith(".pdf", StringComparison.OrdinalIgnoreCase))
+            fileName += ".pdf";
+
+        return fileName;
+    }
+
+    async Task DownloadPdf(string url, string requestedFileName)
     {
         try
         {
-            HttpClient client = new HttpClient();
-
-            using (var response = await client.GetAsync(url, HttpCompletionOption.ResponseHeadersRead))
+            using (var response = await httpClient.GetAsync(url, HttpCompletionOption.ResponseHeadersRead))
             {
                 var total = response.Content.Headers.ContentLength ?? -1L;
                 var stream = await response.Content.ReadAsStreamAsync();
@@ -268,15 +342,11 @@ class Program : Form
                 if (!Directory.Exists(folder))
                     Directory.CreateDirectory(folder);
 
-                string fileName = lastFileName;
-
-                if (string.IsNullOrWhiteSpace(fileName))
-                    fileName = DateTime.Now.Ticks + ".pdf";
-
-                foreach (char c in Path.GetInvalidFileNameChars())
-                    fileName = fileName.Replace(c, '_');
+                string fileName = SanitizeFileName(requestedFileName);
 
                 string filePath = Path.Combine(folder, fileName);
+                filePath = EnsureUniquePath(filePath);
+                fileName = Path.GetFileName(filePath);
 
                 using (var fs = new FileStream(filePath, FileMode.Create, FileAccess.Write))
                 {
@@ -309,6 +379,25 @@ class Program : Form
         }
     }
 
+    static string EnsureUniquePath(string filePath)
+    {
+        if (!File.Exists(filePath))
+            return filePath;
+
+        string dir = Path.GetDirectoryName(filePath) ?? "";
+        string baseName = Path.GetFileNameWithoutExtension(filePath);
+        string ext = Path.GetExtension(filePath);
+
+        int i = 1;
+        while (true)
+        {
+            string candidate = Path.Combine(dir, $"{baseName}_{i}{ext}");
+            if (!File.Exists(candidate))
+                return candidate;
+            i++;
+        }
+    }
+
     async Task Send(ClientWebSocket ws, string msg)
     {
         byte[] bytes = Encoding.UTF8.GetBytes(msg);
@@ -322,9 +411,7 @@ class Program : Form
 
     async Task<string> GetWebSocketUrl()
     {
-        HttpClient client = new HttpClient();
-
-        string json = await client.GetStringAsync("http://127.0.0.1:9222/json");
+        string json = await httpClient.GetStringAsync("http://127.0.0.1:9222/json");
 
         JArray arr = JArray.Parse(json);
 
@@ -344,5 +431,25 @@ class Program : Form
     {
         Application.EnableVisualStyles();
         Application.Run(new Program());
+    }
+
+    protected override void OnFormClosed(FormClosedEventArgs e)
+    {
+        if (ws != null)
+        {
+            try
+            {
+                if (ws.State == WebSocketState.Open)
+                    ws.CloseAsync(WebSocketCloseStatus.NormalClosure, "shutdown", CancellationToken.None).GetAwaiter().GetResult();
+            }
+            catch
+            {
+            }
+
+            ws.Dispose();
+        }
+
+        httpClient.Dispose();
+        base.OnFormClosed(e);
     }
 }
