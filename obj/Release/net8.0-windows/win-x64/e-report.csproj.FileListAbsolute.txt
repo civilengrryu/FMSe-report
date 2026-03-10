@@ -1,0 +1,17 @@
+C:\code\e-report\bin\Release\net8.0-windows\win-x64\e-report.exe
+C:\code\e-report\bin\Release\net8.0-windows\win-x64\e-report.deps.json
+C:\code\e-report\bin\Release\net8.0-windows\win-x64\e-report.runtimeconfig.json
+C:\code\e-report\bin\Release\net8.0-windows\win-x64\e-report.dll
+C:\code\e-report\bin\Release\net8.0-windows\win-x64\e-report.pdb
+C:\code\e-report\bin\Release\net8.0-windows\win-x64\Newtonsoft.Json.dll
+C:\code\e-report\obj\Release\net8.0-windows\win-x64\e-report.csproj.AssemblyReference.cache
+C:\code\e-report\obj\Release\net8.0-windows\win-x64\e-report.GeneratedMSBuildEditorConfig.editorconfig
+C:\code\e-report\obj\Release\net8.0-windows\win-x64\e-report.AssemblyInfoInputs.cache
+C:\code\e-report\obj\Release\net8.0-windows\win-x64\e-report.AssemblyInfo.cs
+C:\code\e-report\obj\Release\net8.0-windows\win-x64\e-report.csproj.CoreCompileInputs.cache
+C:\code\e-report\obj\Release\net8.0-windows\win-x64\e-report.csproj.Up2Date
+C:\code\e-report\obj\Release\net8.0-windows\win-x64\e-report.dll
+C:\code\e-report\obj\Release\net8.0-windows\win-x64\refint\e-report.dll
+C:\code\e-report\obj\Release\net8.0-windows\win-x64\e-report.pdb
+C:\code\e-report\obj\Release\net8.0-windows\win-x64\e-report.genruntimeconfig.cache
+C:\code\e-report\obj\Release\net8.0-windows\win-x64\ref\e-report.dll

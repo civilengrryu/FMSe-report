@@ -1,0 +1,6 @@
+dotnet publish -c Release -r win-x64 --self-contained true /p:PublishSingleFile=true
+대용량
+
+
+dotnet publish -c Release -r win-x64 --self-contained false
+저용량

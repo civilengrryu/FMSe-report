@@ -1,0 +1,2 @@
+C:\code\e-report\bin\Release\net8.0-windows\win-x64\publish\e-report.pdb
+C:\code\e-report\bin\Release\net8.0-windows\win-x64\publish\e-report.exe
