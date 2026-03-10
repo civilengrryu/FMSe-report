@@ -13,7 +13,7 @@ using System.Reflection;
 [assembly: System.Reflection.AssemblyCompanyAttribute("e-report")]
 [assembly: System.Reflection.AssemblyConfigurationAttribute("Debug")]
 [assembly: System.Reflection.AssemblyFileVersionAttribute("1.0.0.0")]
-[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0")]
+[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+2c533083486f09be0ae0878cba923d91edd4108a")]
 [assembly: System.Reflection.AssemblyProductAttribute("e-report")]
 [assembly: System.Reflection.AssemblyTitleAttribute("e-report")]
 [assembly: System.Reflection.AssemblyVersionAttribute("1.0.0.0")]
